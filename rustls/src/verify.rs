@@ -15,22 +15,23 @@ use crate::log::{warn, debug, trace};
 
 type SignatureAlgorithms = &'static [&'static webpki::SignatureAlgorithm];
 
-/// Which signature verification mechanisms we support.  No particular
-/// order.
-static SUPPORTED_SIG_ALGS: SignatureAlgorithms = &[
-    &webpki::ECDSA_P256_SHA256,
-    &webpki::ECDSA_P256_SHA384,
-    &webpki::ECDSA_P384_SHA256,
-    &webpki::ECDSA_P384_SHA384,
-    &webpki::ED25519,
-    &webpki::RSA_PSS_2048_8192_SHA256_LEGACY_KEY,
-    &webpki::RSA_PSS_2048_8192_SHA384_LEGACY_KEY,
-    &webpki::RSA_PSS_2048_8192_SHA512_LEGACY_KEY,
-    &webpki::RSA_PKCS1_2048_8192_SHA256,
-    &webpki::RSA_PKCS1_2048_8192_SHA384,
-    &webpki::RSA_PKCS1_2048_8192_SHA512,
-    &webpki::RSA_PKCS1_3072_8192_SHA384
-];
+// /// Which signature verification mechanisms we support.  No particular
+// /// order.
+// static SUPPORTED_SIG_ALGS: SignatureAlgorithms = &[
+//     &webpki::ECDSA_P256_SHA256,
+//     &webpki::ECDSA_P256_SHA384,
+//     &webpki::ECDSA_P384_SHA256,
+//     &webpki::ECDSA_P384_SHA384,
+//     &webpki::ED25519,
+//     &webpki::RSA_PSS_2048_8192_SHA256_LEGACY_KEY,
+//     &webpki::RSA_PSS_2048_8192_SHA384_LEGACY_KEY,
+//     &webpki::RSA_PSS_2048_8192_SHA512_LEGACY_KEY,
+//     &webpki::RSA_PKCS1_2048_8192_SHA256,
+//     &webpki::RSA_PKCS1_2048_8192_SHA384,
+//     &webpki::RSA_PKCS1_2048_8192_SHA512,
+//     &webpki::RSA_PKCS1_3072_8192_SHA384
+// ];
+include!("generated/supported_sigalgs.rs");
 
 /// Marker types.  These are used to bind the fact some verification
 /// (certificate chain or handshake signature) has taken place into
@@ -272,7 +273,7 @@ impl WebPKIVerifier {
     /// Returns the signature verification methods supported by
     /// webpki.
     pub fn verification_schemes() -> Vec<SignatureScheme> {
-        vec![
+        let mut schemes = vec![
             SignatureScheme::ECDSA_NISTP384_SHA384,
             SignatureScheme::ECDSA_NISTP256_SHA256,
 
@@ -285,7 +286,10 @@ impl WebPKIVerifier {
             SignatureScheme::RSA_PKCS1_SHA512,
             SignatureScheme::RSA_PKCS1_SHA384,
             SignatureScheme::RSA_PKCS1_SHA256,
-        ]
+        ];
+        schemes.extend_from_slice(include!("generated/pq_sigschemes.rs"));
+        schemes.extend_from_slice(include!("generated/pq_kemschemes.rs"));
+        schemes
     }
 }
 
@@ -490,18 +494,7 @@ fn convert_alg_tls13(scheme: SignatureScheme)
                      -> Result<&'static webpki::SignatureAlgorithm, TLSError> {
     use crate::msgs::enums::SignatureScheme::*;
 
-    match scheme {
-        ECDSA_NISTP256_SHA256 => Ok(&webpki::ECDSA_P256_SHA256),
-        ECDSA_NISTP384_SHA384 => Ok(&webpki::ECDSA_P384_SHA384),
-        ED25519 => Ok(&webpki::ED25519),
-        RSA_PSS_SHA256 => Ok(&webpki::RSA_PSS_2048_8192_SHA256_LEGACY_KEY),
-        RSA_PSS_SHA384 => Ok(&webpki::RSA_PSS_2048_8192_SHA384_LEGACY_KEY),
-        RSA_PSS_SHA512 => Ok(&webpki::RSA_PSS_2048_8192_SHA512_LEGACY_KEY),
-        _ => {
-            let error_msg = format!("received unsupported sig scheme {:?}", scheme);
-            Err(TLSError::PeerMisbehavedError(error_msg))
-        }
-    }
+    include!("generated/convert_sigalg.rs")
 }
 
 /// Constructs the signature message specified in section 4.4.3 of RFC8446.

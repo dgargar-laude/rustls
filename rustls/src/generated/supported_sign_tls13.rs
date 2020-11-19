@@ -1,0 +1,16 @@
+&[
+    SignatureScheme::ECDSA_NISTP384_SHA384,
+    SignatureScheme::ECDSA_NISTP256_SHA256,
+    SignatureScheme::RSA_PSS_SHA512,
+    SignatureScheme::RSA_PSS_SHA384,
+    SignatureScheme::RSA_PSS_SHA256,
+    SignatureScheme::ED25519,
+    SignatureScheme::DILITHIUM2,
+    SignatureScheme::DILITHIUM3,
+    SignatureScheme::FALCON512,
+    SignatureScheme::SPHINCSSHA256128FROBUST,
+    SignatureScheme::SPHINCSSHA256128FSIMPLE,
+    SignatureScheme::KEMTLS_KYBER512,
+    SignatureScheme::KEMTLS_LIGHTSABER,
+    SignatureScheme::KEMTLS_SIDHP434,
+]

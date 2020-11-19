@@ -154,6 +154,7 @@ pub struct ClientAuthDetails {
     pub cert: Option<CertificatePayload>,
     pub signer: Option<Box<dyn sign::Signer>>,
     pub auth_context: Option<Vec<u8>>,
+    pub private_key: Option<Vec<u8>>,
 }
 
 impl ClientAuthDetails {
@@ -162,6 +163,7 @@ impl ClientAuthDetails {
             cert: None,
             signer: None,
             auth_context: None,
+            private_key: None,
         }
     }
 }

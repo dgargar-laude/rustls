@@ -116,7 +116,7 @@ impl hs::State for ExpectClientKX {
             return Err(TLSError::CorruptMessagePayload(ContentType::Handshake));
         }
 
-        let kxd = kx.server_complete(&client_kx.0)
+        let shared_secret = kx.server_decapsulate(&client_kx.0)
             .ok_or_else(|| TLSError::PeerMisbehavedError("key exchange completion failed"
                                                          .to_string()))?;
 
@@ -126,11 +126,11 @@ impl hs::State for ExpectClientKX {
             SessionSecrets::new_ems(&self.handshake.randoms,
                                     &handshake_hash,
                                     hashalg,
-                                    &kxd.shared_secret)
+                                    &shared_secret)
         } else {
             SessionSecrets::new(&self.handshake.randoms,
                                 hashalg,
-                                &kxd.shared_secret)
+                                &shared_secret)
         };
         sess.config.key_log.log("CLIENT_RANDOM",
                                 &secrets.randoms.client,

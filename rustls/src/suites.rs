@@ -1,13 +1,64 @@
 use crate::msgs::enums::{CipherSuite, HashAlgorithm, SignatureAlgorithm, SignatureScheme};
 use crate::msgs::enums::{NamedGroup, ProtocolVersion};
-use crate::msgs::handshake::KeyExchangeAlgorithm;
 use crate::msgs::handshake::DecomposedSignatureScheme;
+use crate::msgs::handshake::KeyExchangeAlgorithm;
 use crate::msgs::handshake::{ClientECDHParams, ServerECDHParams};
 use crate::msgs::codec::{Reader, Codec};
 use crate::cipher;
 
+use oqs;
+
 use ring;
 use std::fmt;
+
+pub enum KexAlgorithm {
+    RingAlg(&'static ring::agreement::Algorithm),
+    KEM(oqs::kem::Kem),
+}
+
+
+pub enum KexPrivateKey {
+    RingKey(ring::agreement::EphemeralPrivateKey),
+    KEM(oqs::kem::SecretKey),
+}
+
+impl KexPrivateKey {
+    fn into_ring_key(self) -> ring::agreement::EphemeralPrivateKey {
+        match self {
+            Self::RingKey(key) => key,
+            _ => panic!("Wrong key type"),
+        }
+    }
+    fn into_kem_key(self) -> oqs::kem::SecretKey {
+        match self {
+            Self::KEM(key) => key,
+            _ => panic!("Wrong key type!"),
+        }
+    }
+}
+
+pub enum KexPublicKey {
+    RingKey(ring::agreement::PublicKey),
+    KEM(oqs::kem::PublicKey),
+}
+
+// impl KexPublicKey {
+//     fn into_ring_key(self) -> ring::agreement::PublicKey {
+//         match self {
+//             Self::RingKey(key) => key,
+//             _ => panic!("Wrong key type"),
+//         }
+//     }
+// }
+
+impl AsRef<[u8]> for KexPublicKey {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::RingKey(key) => key.as_ref(),
+            Self::KEM(key) => key.as_ref(),
+        }
+    }
+}
 
 /// Bulk symmetric encryption scheme used by a cipher suite.
 #[allow(non_camel_case_types)]
@@ -27,7 +78,7 @@ pub enum BulkAlgorithm {
 /// and the agreed shared secret (also known as the "premaster secret"
 /// in TLS1.0-era protocols, and "Z" in TLS1.3).
 pub struct KeyExchangeResult {
-    pub pubkey: ring::agreement::PublicKey,
+    pub ciphertext: Vec<u8>,
     pub shared_secret: Vec<u8>,
 }
 
@@ -35,41 +86,82 @@ pub struct KeyExchangeResult {
 /// our private key, and our public key.
 pub struct KeyExchange {
     pub group: NamedGroup,
-    alg: &'static ring::agreement::Algorithm,
-    privkey: ring::agreement::EphemeralPrivateKey,
-    pub pubkey: ring::agreement::PublicKey,
+    alg: KexAlgorithm,
+    privkey: KexPrivateKey,
+    pub pubkey: KexPublicKey,
 }
 
 impl KeyExchange {
-    pub fn named_group_to_ecdh_alg(group: NamedGroup)
-                                   -> Option<&'static ring::agreement::Algorithm> {
+    pub fn named_group_to_ecdh_alg(group: NamedGroup) -> Option<KexAlgorithm> {
         match group {
-            NamedGroup::X25519 => Some(&ring::agreement::X25519),
-            NamedGroup::secp256r1 => Some(&ring::agreement::ECDH_P256),
-            NamedGroup::secp384r1 => Some(&ring::agreement::ECDH_P384),
-            _ => None,
+            NamedGroup::X25519 => Some(KexAlgorithm::RingAlg(&ring::agreement::X25519)),
+            NamedGroup::secp256r1 => Some(KexAlgorithm::RingAlg(&ring::agreement::ECDH_P256)),
+            NamedGroup::secp384r1 => Some(KexAlgorithm::RingAlg(&ring::agreement::ECDH_P384)),
+            group => include!("generated/named_group_to_kex.rs"),
         }
     }
 
     pub fn supported_groups() -> &'static [NamedGroup] {
         // in preference order
+        include!("generated/supported_kex_groups.rs")
+        // &[
+        //     NamedGroup::X25519,
+        //     NamedGroup::secp384r1,
+        //     NamedGroup::secp256r1,
+        // ]
+    }
+
+    pub fn supported_groups_tls12() -> &'static [NamedGroup] {
+        // in preference order
         &[
             NamedGroup::X25519,
             NamedGroup::secp384r1,
-            NamedGroup::secp256r1
+            NamedGroup::secp256r1,
         ]
     }
 
-    pub fn client_ecdhe(kx_params: &[u8]) -> Option<KeyExchangeResult> {
-        let mut rd = Reader::init(kx_params);
-        let ecdh_params = ServerECDHParams::read(&mut rd)?;
-
-        KeyExchange::start_ecdhe(ecdh_params.curve_params.named_group)?
-            .complete(&ecdh_params.public.0)
+    // Generate's the public key keyshare
+    pub fn start_kex(named_group: NamedGroup) -> Option<KeyExchange> {
+        let alg = KeyExchange::named_group_to_ecdh_alg(named_group)?;
+        match alg {
+            KexAlgorithm::RingAlg(alg) => Self::start_ecdhe(named_group, alg),
+            KexAlgorithm::KEM(kem) => {
+                let (pk, sk) = kem.keypair().unwrap();
+                Some(KeyExchange {
+                    group: named_group,
+                    alg: KexAlgorithm::KEM(kem),
+                    privkey: KexPrivateKey::KEM(sk),
+                    pubkey: KexPublicKey::KEM(pk),
+                })
+            },
+        }
     }
 
-    pub fn start_ecdhe(named_group: NamedGroup) -> Option<KeyExchange> {
+    // Encapsulates to the server's share
+    pub fn encapsulate(named_group: NamedGroup, peer: &[u8]) -> Option<KeyExchangeResult> {
         let alg = KeyExchange::named_group_to_ecdh_alg(named_group)?;
+        match alg {
+            KexAlgorithm::RingAlg(alg) => {
+                let kex = Self::start_ecdhe(named_group, alg)?;
+                let ciphertext = kex.pubkey.as_ref().to_vec();
+                let shared_secret = kex.decapsulate(peer)?;
+                Some(KeyExchangeResult {
+                    ciphertext,
+                    shared_secret,
+                })
+            },
+            KexAlgorithm::KEM(kem) => {
+                let pk = kem.public_key_from_bytes(peer)?;
+                let (ciphertext, shared_secret) = kem.encapsulate(pk).ok()?;
+                Some(KeyExchangeResult {ciphertext: ciphertext.into_vec(), shared_secret: shared_secret.into_vec()})
+            },
+        }
+    }
+
+    fn start_ecdhe(
+        named_group: NamedGroup,
+        alg: &'static ring::agreement::Algorithm,
+    ) -> Option<KeyExchange> {
         let rng = ring::rand::SystemRandom::new();
         let ours = ring::agreement::EphemeralPrivateKey::generate(alg, &rng).unwrap();
 
@@ -77,9 +169,9 @@ impl KeyExchange {
 
         Some(KeyExchange {
             group: named_group,
-            alg,
-            privkey: ours,
-            pubkey,
+            alg: KexAlgorithm::RingAlg(&alg),
+            privkey: KexPrivateKey::RingKey(ours),
+            pubkey: KexPublicKey::RingKey(pubkey),
         })
     }
 
@@ -97,30 +189,46 @@ impl KeyExchange {
         }
     }
 
-    pub fn server_complete(self, kx_params: &[u8]) -> Option<KeyExchangeResult> {
-        self.decode_client_params(kx_params)
-            .and_then(|ecdh| self.complete(&ecdh.public.0))
+    pub fn client_kex(kx_params: &[u8]) -> Option<KeyExchangeResult> {
+        let mut rd = Reader::init(kx_params);
+        let server_params = ServerECDHParams::read(&mut rd).unwrap();
+        
+        Self::encapsulate(server_params.curve_params.named_group, &server_params.public.0)
     }
 
-    pub fn complete(self, peer: &[u8]) -> Option<KeyExchangeResult> {
-        let peer_key = ring::agreement::UnparsedPublicKey::new(self.alg, peer);
-        let secret = ring::agreement::agree_ephemeral(self.privkey,
-                                                      &peer_key,
-                                                      (),
-                                                      |v| {
-                                                          let mut r = Vec::new();
-                                                          r.extend_from_slice(v);
-                                                          Ok(r)
-                                                      });
+    pub fn server_decapsulate(self, kx_params: &[u8]) -> Option<Vec<u8>> {
+        self.decode_client_params(kx_params)
+            .and_then(|ecdh| self.decapsulate(&ecdh.public.0))
+    }
 
-        if secret.is_err() {
-            return None;
+    pub fn decapsulate(self, peer: &[u8]) -> Option<Vec<u8>> {
+        match self.alg {
+            KexAlgorithm::RingAlg(alg) => {
+                let peer_key = ring::agreement::UnparsedPublicKey::new(alg, peer);
+                let secret = ring::agreement::agree_ephemeral(
+                    self.privkey
+                        .into_ring_key(),
+                    &peer_key,
+                    (),
+                    |v| {
+                        let mut r = Vec::new();
+                        r.extend_from_slice(v);
+                        Ok(r)
+                    },
+                );
+
+                if secret.is_err() {
+                    return None;
+                }
+
+                Some(secret.unwrap())
+            }
+            KexAlgorithm::KEM(kem) => {
+                let sk = self.privkey.into_kem_key();
+                let ct = kem.ciphertext_from_bytes(peer)?;
+                Some(kem.decapsulate(&sk, ct).ok()?.into_vec())
+            }
         }
-
-        Some(KeyExchangeResult {
-            pubkey: self.pubkey,
-            shared_secret: secret.unwrap(),
-        })
     }
 }
 
@@ -200,16 +308,17 @@ impl SupportedCipherSuite {
     /// return it and the public half in a `KeyExchangeResult`.
     pub fn do_client_kx(&self, kx_params: &[u8]) -> Option<KeyExchangeResult> {
         match self.kx {
-            KeyExchangeAlgorithm::ECDHE => KeyExchange::client_ecdhe(kx_params),
+            KeyExchangeAlgorithm::ECDHE => KeyExchange::client_kex(kx_params),
             _ => None,
         }
     }
 
     /// Start the KX process with the given group.  This generates
     /// the server's share, but we don't yet have the client's share.
+    /// Not used in TLS 1.3
     pub fn start_server_kx(&self, named_group: NamedGroup) -> Option<KeyExchange> {
         match self.kx {
-            KeyExchangeAlgorithm::ECDHE => KeyExchange::start_ecdhe(named_group),
+            KeyExchangeAlgorithm::ECDHE => KeyExchange::start_kex(named_group),
             _ => None,
         }
     }
@@ -256,13 +365,15 @@ impl SupportedCipherSuite {
 
     /// Can a session using suite self resume using suite new_suite?
     pub fn can_resume_to(&self, new_suite: &SupportedCipherSuite) -> bool {
-        if self.usable_for_version(ProtocolVersion::TLSv1_3) &&
-            new_suite.usable_for_version(ProtocolVersion::TLSv1_3) {
+        if self.usable_for_version(ProtocolVersion::TLSv1_3)
+            && new_suite.usable_for_version(ProtocolVersion::TLSv1_3)
+        {
             // TLS1.3 actually specifies requirements here: suites are compatible
             // for resumption if they have the same KDF hash
             self.hash == new_suite.hash
-        } else if self.usable_for_version(ProtocolVersion::TLSv1_2) &&
-            new_suite.usable_for_version(ProtocolVersion::TLSv1_2) {
+        } else if self.usable_for_version(ProtocolVersion::TLSv1_2)
+            && new_suite.usable_for_version(ProtocolVersion::TLSv1_2)
+        {
             // Previous versions don't specify any constraint, so we don't
             // resume between suites to avoid bad interactions.
             self.suite == new_suite.suite
@@ -439,20 +550,20 @@ pub static ALL_CIPHERSUITES: [&SupportedCipherSuite; 9] = [
     &TLS13_CHACHA20_POLY1305_SHA256,
     &TLS13_AES_256_GCM_SHA384,
     &TLS13_AES_128_GCM_SHA256,
-
     // TLS1.2 suites
     &TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
     &TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
     &TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
     &TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
     &TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-    &TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    &TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 ];
 
 // These both O(N^2)!
-pub fn choose_ciphersuite_preferring_client(client_suites: &[CipherSuite],
-                                            server_suites: &[&'static SupportedCipherSuite])
-                                            -> Option<&'static SupportedCipherSuite> {
+pub fn choose_ciphersuite_preferring_client(
+    client_suites: &[CipherSuite],
+    server_suites: &[&'static SupportedCipherSuite],
+) -> Option<&'static SupportedCipherSuite> {
     for client_suite in client_suites {
         if let Some(selected) = server_suites.iter().find(|x| *client_suite == x.suite) {
             return Some(*selected);
@@ -462,10 +573,14 @@ pub fn choose_ciphersuite_preferring_client(client_suites: &[CipherSuite],
     None
 }
 
-pub fn choose_ciphersuite_preferring_server(client_suites: &[CipherSuite],
-                                            server_suites: &[&'static SupportedCipherSuite])
-                                            -> Option<&'static SupportedCipherSuite> {
-    if let Some(selected) = server_suites.iter().find(|x| client_suites.contains(&x.suite)) {
+pub fn choose_ciphersuite_preferring_server(
+    client_suites: &[CipherSuite],
+    server_suites: &[&'static SupportedCipherSuite],
+) -> Option<&'static SupportedCipherSuite> {
+    if let Some(selected) = server_suites
+        .iter()
+        .find(|x| client_suites.contains(&x.suite))
+    {
         return Some(*selected);
     }
 
@@ -474,9 +589,10 @@ pub fn choose_ciphersuite_preferring_server(client_suites: &[CipherSuite],
 
 /// Return a list of the ciphersuites in `all` with the suites
 /// incompatible with `SignatureAlgorithm` `sigalg` removed.
-pub fn reduce_given_sigalg(all: &[&'static SupportedCipherSuite],
-                           sigalg: SignatureAlgorithm)
-                           -> Vec<&'static SupportedCipherSuite> {
+pub fn reduce_given_sigalg(
+    all: &[&'static SupportedCipherSuite],
+    sigalg: SignatureAlgorithm,
+) -> Vec<&'static SupportedCipherSuite> {
     all.iter()
         .filter(|&&suite| suite.usable_for_sigalg(sigalg))
         .cloned()
@@ -485,9 +601,10 @@ pub fn reduce_given_sigalg(all: &[&'static SupportedCipherSuite],
 
 /// Return a list of the ciphersuites in `all` with the suites
 /// incompatible with the chosen `version` removed.
-pub fn reduce_given_version(all: &[&'static SupportedCipherSuite],
-                            version: ProtocolVersion)
-                            -> Vec<&'static SupportedCipherSuite> {
+pub fn reduce_given_version(
+    all: &[&'static SupportedCipherSuite],
+    version: ProtocolVersion,
+) -> Vec<&'static SupportedCipherSuite> {
     all.iter()
         .filter(|&&suite| suite.usable_for_version(version))
         .cloned()
@@ -495,8 +612,10 @@ pub fn reduce_given_version(all: &[&'static SupportedCipherSuite],
 }
 
 /// Return true if `sigscheme` is usable by any of the given suites.
-pub fn compatible_sigscheme_for_suites(sigscheme: SignatureScheme,
-                                       common_suites: &[&'static SupportedCipherSuite]) -> bool {
+pub fn compatible_sigscheme_for_suites(
+    sigscheme: SignatureScheme,
+    common_suites: &[&'static SupportedCipherSuite],
+) -> bool {
     let sigalg = sigscheme.sign();
     common_suites.iter()
         .any(|&suite| suite.usable_for_sigalg(sigalg))
@@ -509,32 +628,46 @@ mod test {
 
     #[test]
     fn test_client_pref() {
-        let client = vec![CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-                          CipherSuite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384];
-        let server = vec![&TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-                          &TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256];
+        let client = vec![
+            CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            CipherSuite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+        ];
+        let server = vec![
+            &TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+            &TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        ];
         let chosen = choose_ciphersuite_preferring_client(&client, &server);
         assert!(chosen.is_some());
-        assert_eq!(chosen.unwrap(),
-                   &TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
+        assert_eq!(chosen.unwrap(), &TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
     }
 
     #[test]
     fn test_server_pref() {
-        let client = vec![CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-                          CipherSuite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384];
-        let server = vec![&TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-                          &TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256];
+        let client = vec![
+            CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            CipherSuite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+        ];
+        let server = vec![
+            &TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+            &TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        ];
         let chosen = choose_ciphersuite_preferring_server(&client, &server);
         assert!(chosen.is_some());
-        assert_eq!(chosen.unwrap(),
-                   &TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384);
+        assert_eq!(chosen.unwrap(), &TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384);
     }
 
     #[test]
     fn test_pref_fails() {
-        assert!(choose_ciphersuite_preferring_client(&[CipherSuite::TLS_NULL_WITH_NULL_NULL], &ALL_CIPHERSUITES).is_none());
-        assert!(choose_ciphersuite_preferring_server(&[CipherSuite::TLS_NULL_WITH_NULL_NULL], &ALL_CIPHERSUITES).is_none());
+        assert!(choose_ciphersuite_preferring_client(
+            &[CipherSuite::TLS_NULL_WITH_NULL_NULL],
+            &ALL_CIPHERSUITES
+        )
+        .is_none());
+        assert!(choose_ciphersuite_preferring_server(
+            &[CipherSuite::TLS_NULL_WITH_NULL_NULL],
+            &ALL_CIPHERSUITES
+        )
+        .is_none());
     }
 
     #[test]
@@ -571,9 +704,11 @@ mod test {
     fn test_can_resume_to() {
         assert!(TLS13_CHACHA20_POLY1305_SHA256.can_resume_to(&TLS13_AES_128_GCM_SHA256));
         assert!(!TLS13_CHACHA20_POLY1305_SHA256.can_resume_to(&TLS13_AES_256_GCM_SHA384));
-        assert!(!TLS13_CHACHA20_POLY1305_SHA256.can_resume_to(&TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256));
-        assert!(!TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256.can_resume_to(&TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256));
-        assert!(TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256.can_resume_to(&TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256));
+        assert!(!TLS13_CHACHA20_POLY1305_SHA256
+            .can_resume_to(&TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256));
+        assert!(!TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+            .can_resume_to(&TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256));
+        assert!(TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+            .can_resume_to(&TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256));
     }
-
 }

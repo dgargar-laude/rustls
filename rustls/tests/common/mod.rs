@@ -101,6 +101,41 @@ embed_files! {
     (RSA_INTER_CERT, "rsa", "inter.cert");
     (RSA_INTER_KEY, "rsa", "inter.key");
     (RSA_INTER_REQ, "rsa", "inter.req");
+
+    (DILITHIUM_CA_CERT, "dilithium", "ca.cert");
+    //(DILITHIUM_CA_DER, "dilithium", "ca.der");
+    (DILITHIUM_CA_KEY, "dilithium", "ca.key");
+    //(DILITHIUM_CLIENT_CERT, "dilithium", "client.cert");
+    //(DILITHIUM_CLIENT_CHAIN, "dilithium", "client.chain");
+    //(DILITHIUM_CLIENT_FULLCHAIN, "dilithium", "client.fullchain");
+    //(DILITHIUM_CLIENT_KEY, "dilithium", "client.key");
+    //(DILITHIUM_CLIENT_REQ, "dilithium", "client.req");
+    (DILITHIUM_END_CERT, "dilithium", "end.cert");
+    (DILITHIUM_END_CHAIN, "dilithium", "end.chain");
+    (DILITHIUM_END_FULLCHAIN, "dilithium", "end.fullchain");
+    (DILITHIUM_END_KEY, "dilithium", "end.key");
+    //(DILITHIUM_END_REQ, "dilithium", "end.req");
+    (DILITHIUM_INTER_CERT, "dilithium", "inter.cert");
+    (DILITHIUM_INTER_KEY, "dilithium", "inter.key");
+    //(DILITHIUM_INTER_REQ, "dilithium", "inter.req");
+
+    (KYBER_CA_CERT, "kyber", "ca.cert");
+    //(KYBER_CA_DER, "kyber", "ca.der");
+    (KYBER_CA_KEY, "kyber", "ca.key");
+    (KYBER_CLIENT_CERT, "kyber", "client.cert");
+    (KYBER_CLIENT_CHAIN, "kyber", "client.chain");
+    (KYBER_CLIENT_FULLCHAIN, "kyber", "client.fullchain");
+    (KYBER_CLIENT_KEY, "kyber", "client.key");
+    //(KYBER_CLIENT_REQ, "kyber", "client.req");
+    (KYBER_END_CERT, "kyber", "end.cert");
+    (KYBER_END_CHAIN, "kyber", "end.chain");
+    (KYBER_END_FULLCHAIN, "kyber", "end.fullchain");
+    (KYBER_END_KEY, "kyber", "end.key");
+    //(KYBER_END_REQ, "kyber", "end.req");
+    (KYBER_INTER_CERT, "kyber", "inter.cert");
+    (KYBER_INTER_KEY, "kyber", "inter.key");
+    //(KYBER_INTER_REQ, "kyber", "inter.req");
+
 }
 
 pub fn transfer(left: &mut dyn Session, right: &mut dyn Session) -> usize {
@@ -166,12 +201,15 @@ pub enum KeyType {
     RSA,
     ECDSA,
     ED25519,
+    Kyber512,
+    Dilithium2,
 }
 
 pub static ALL_KEY_TYPES: [KeyType; 3] = [
     KeyType::RSA,
     KeyType::ECDSA,
     KeyType::ED25519,
+    //KeyType::Dilithium2,
 ];
 
 impl KeyType {
@@ -180,6 +218,8 @@ impl KeyType {
             KeyType::RSA => bytes_for("rsa", part),
             KeyType::ECDSA => bytes_for("ecdsa", part),
             KeyType::ED25519 => bytes_for("eddsa", part),
+            KeyType::Kyber512 => bytes_for("kyber", part),
+            KeyType::Dilithium2 => bytes_for("dilithium", part),
         }
     }
 

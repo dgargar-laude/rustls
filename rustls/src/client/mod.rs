@@ -30,6 +30,7 @@ mod tls12;
 mod tls13;
 mod common;
 pub mod handy;
+mod default_group;
 
 /// A trait for the ability to store client session data.
 /// The keys and values are opaque.

@@ -171,6 +171,60 @@ fn buffered_client_data_sent() {
 }
 
 #[test]
+fn buffered_pqtls_client_data_sent() {
+    let server_config = Arc::new(make_server_config(KeyType::Dilithium2));
+
+    let client_config = make_client_config(KeyType::Dilithium2);
+    let (mut client, mut server) = make_pair_for_arc_configs(&Arc::new(client_config),
+                                                                &server_config);
+
+    assert_eq!(5, client.write(b"hello").unwrap());
+
+    do_handshake(&mut client, &mut server);
+    transfer(&mut client, &mut server);
+    server.process_new_packets().unwrap();
+
+    check_read(&mut server, b"hello");
+
+}
+
+#[test]
+fn buffered_kemtls_client_data_sent() {
+    let server_config = Arc::new(make_server_config(KeyType::Kyber512));
+
+    let client_config = make_client_config(KeyType::Kyber512);
+    let (mut client, mut server) = make_pair_for_arc_configs(&Arc::new(client_config),
+                                                                &server_config);
+
+    assert_eq!(5, client.write(b"hello").unwrap());
+
+    do_handshake(&mut client, &mut server);
+    transfer(&mut client, &mut server);
+    server.process_new_packets().unwrap();
+
+    check_read(&mut server, b"hello");
+
+}
+
+#[test]
+fn buffered_kemtls_clientauth_client_data_sent() {
+    let server_config = Arc::new(make_server_config_with_mandatory_client_auth(KeyType::Kyber512));
+
+    let client_config = make_client_config_with_auth(KeyType::Kyber512);
+    let (mut client, mut server) = make_pair_for_arc_configs(&Arc::new(client_config),
+                                                                &server_config);
+
+    assert_eq!(5, client.write(b"hello").unwrap());
+
+    do_handshake(&mut client, &mut server);
+    transfer(&mut client, &mut server);
+    server.process_new_packets().unwrap();
+
+    check_read(&mut server, b"hello");
+
+}
+
+#[test]
 fn buffered_server_data_sent() {
     let server_config = Arc::new(make_server_config(KeyType::RSA));
 
@@ -379,7 +433,7 @@ impl ResolvesServerCert for ServerCheckCertResolve {
         }
 
         if let Some(expected_sigalgs) = &self.expected_sigalgs {
-            if expected_sigalgs != &client_hello.sigschemes() {
+            if !client_hello.sigschemes().starts_with(expected_sigalgs) {
                 panic!("unexpected signature schemes (wanted {:?} got {:?})",
                        self.expected_sigalgs, client_hello.sigschemes());
             }

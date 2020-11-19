@@ -1,0 +1,10 @@
+match scheme {
+    SignatureScheme::DILITHIUM2 => include_bytes!("data/alg-dilithium2.der"),
+    SignatureScheme::DILITHIUM3 => include_bytes!("data/alg-dilithium3.der"),
+    SignatureScheme::FALCON512 => include_bytes!("data/alg-falcon512.der"),
+    SignatureScheme::SPHINCSSHA256128FROBUST => include_bytes!("data/alg-sphincssha256128frobust.der"),
+    SignatureScheme::SPHINCSSHA256128FSIMPLE => include_bytes!("data/alg-sphincssha256128fsimple.der"),
+    SignatureScheme::KEMTLS_KYBER512 => include_bytes!("data/alg-kyber512.der"),
+    SignatureScheme::KEMTLS_LIGHTSABER => include_bytes!("data/alg-lightsaber.der"),
+    SignatureScheme::KEMTLS_SIDHP434 => include_bytes!("data/alg-SidhP434.der"),
+    _ => unreachable!(),}

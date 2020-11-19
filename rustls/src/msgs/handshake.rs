@@ -2132,6 +2132,8 @@ pub enum HandshakePayload {
     Finished(Payload),
     CertificateStatus(CertificateStatus),
     MessageHash(Payload),
+    ServerKemCiphertext(Payload),
+    ClientKemCiphertext(Payload),
     Unknown(Payload),
 }
 
@@ -2160,6 +2162,8 @@ impl HandshakePayload {
             HandshakePayload::CertificateStatus(ref x) => x.encode(bytes),
             HandshakePayload::MessageHash(ref x) => x.encode(bytes),
             HandshakePayload::Unknown(ref x) => x.encode(bytes),
+            HandshakePayload::ServerKemCiphertext(ref x) => {x.encode(bytes)}
+            HandshakePayload::ClientKemCiphertext(ref x) => {x.encode(bytes)}
         }
     }
 }
@@ -2281,6 +2285,12 @@ impl HandshakeMessagePayload {
             HandshakeType::HelloRetryRequest => {
                 // not legal on wire
                 return None;
+            }
+            HandshakeType::ServerKemCiphertext => {
+                HandshakePayload::ServerKemCiphertext(Payload::read(&mut sub).unwrap())
+            }
+            HandshakeType::ClientKemCiphertext => {
+                HandshakePayload::ClientKemCiphertext(Payload::read(&mut sub).unwrap())
             }
             _ => HandshakePayload::Unknown(Payload::read(&mut sub).unwrap()),
         };

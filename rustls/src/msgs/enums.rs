@@ -35,21 +35,22 @@ enum_builder! {
     }
 }
 
-enum_builder! {
-    /// The `SignatureAlgorithm` TLS protocol enum.  Values in this enum are taken
-    /// from the various RFCs covering TLS, and are listed by IANA.
-    /// The `Unknown` item is used when processing unrecognised ordinals.
-    @U8
-    EnumName: SignatureAlgorithm;
-    EnumVal{
-        Anonymous => 0x00,
-        RSA => 0x01,
-        DSA => 0x02,
-        ECDSA => 0x03,
-        ED25519 => 0x07,
-        ED448 => 0x08
-    }
-}
+// enum_builder! {
+//     /// The `SignatureAlgorithm` TLS protocol enum.  Values in this enum are taken
+//     /// from the various RFCs covering TLS, and are listed by IANA.
+//     /// The `Unknown` item is used when processing unrecognised ordinals.
+//     @U8
+//     EnumName: SignatureAlgorithm;
+//     EnumVal{
+//         Anonymous => 0x00,
+//         RSA => 0x01,
+//         DSA => 0x02,
+//         ECDSA => 0x03,
+//         ED25519 => 0x07,
+//         ED448 => 0x08,
+//     }
+// }
+include!("../generated/enums_signaturealgorithms.rs");
 
 enum_builder! {
     /// The `ClientCertificateType` TLS protocol enum.  Values in this enum are taken
@@ -123,7 +124,9 @@ enum_builder! {
         CertificateURL => 0x15,
         CertificateStatus => 0x16,
         KeyUpdate => 0x18,
-        MessageHash => 0xfe
+        MessageHash => 0xfe,
+        ServerKemCiphertext => 0x20,
+        ClientKemCiphertext => 0x21
     }
 }
 
@@ -294,25 +297,28 @@ enum_builder! {
     }
 }
 
-enum_builder! {
-    /// The `NamedGroup` TLS protocol enum.  Values in this enum are taken
-    /// from the various RFCs covering TLS, and are listed by IANA.
-    /// The `Unknown` item is used when processing unrecognised ordinals.
-    @U16
-    EnumName: NamedGroup;
-    EnumVal{
-        secp256r1 => 0x0017,
-        secp384r1 => 0x0018,
-        secp521r1 => 0x0019,
-        X25519 => 0x001d,
-        X448 => 0x001e,
-        FFDHE2048 => 0x0100,
-        FFDHE3072 => 0x0101,
-        FFDHE4096 => 0x0102,
-        FFDHE6144 => 0x0103,
-        FFDHE8192 => 0x0104
-    }
-}
+// enum_builder! {
+//     /// The `NamedGroup` TLS protocol enum.  Values in this enum are taken
+//     /// from the various RFCs covering TLS, and are listed by IANA.
+//     /// The `Unknown` item is used when processing unrecognised ordinals.
+//     @U16
+//     EnumName: NamedGroup;
+//     EnumVal{
+//         secp256r1 => 0x0017,
+//         secp384r1 => 0x0018,
+//         secp521r1 => 0x0019,
+//         X25519 => 0x001d,
+//         X448 => 0x001e,
+//         FFDHE2048 => 0x0100,
+//         FFDHE3072 => 0x0101,
+//         FFDHE4096 => 0x0102,
+//         FFDHE6144 => 0x0103,
+//         FFDHE8192 => 0x0104,
+//         // KEMTLS_ADD_KEMS
+//         // END_KEMTLS_ADD_KEMS
+//     }
+// }
+include!("../generated/enums_namedgroup.rs");
 
 enum_builder! {
     /// The `CipherSuite` TLS protocol enum.  Values in this enum are taken
@@ -734,28 +740,29 @@ enum_builder! {
     }
 }
 
-enum_builder! {
-    /// The `SignatureScheme` TLS protocol enum.  Values in this enum are taken
-    /// from the various RFCs covering TLS, and are listed by IANA.
-    /// The `Unknown` item is used when processing unrecognised ordinals.
-    @U16
-    EnumName: SignatureScheme;
-    EnumVal{
-        RSA_PKCS1_SHA1 => 0x0201,
-        ECDSA_SHA1_Legacy => 0x0203,
-        RSA_PKCS1_SHA256 => 0x0401,
-        ECDSA_NISTP256_SHA256 => 0x0403,
-        RSA_PKCS1_SHA384 => 0x0501,
-        ECDSA_NISTP384_SHA384 => 0x0503,
-        RSA_PKCS1_SHA512 => 0x0601,
-        ECDSA_NISTP521_SHA512 => 0x0603,
-        RSA_PSS_SHA256 => 0x0804,
-        RSA_PSS_SHA384 => 0x0805,
-        RSA_PSS_SHA512 => 0x0806,
-        ED25519 => 0x0807,
-        ED448 => 0x0808
-    }
-}
+// enum_builder! {
+//     /// The `SignatureScheme` TLS protocol enum.  Values in this enum are taken
+//     /// from the various RFCs covering TLS, and are listed by IANA.
+//     /// The `Unknown` item is used when processing unrecognised ordinals.
+//     @U16
+//     EnumName: SignatureScheme;
+//     EnumVal{
+//         RSA_PKCS1_SHA1 => 0x0201,
+//         ECDSA_SHA1_Legacy => 0x0203,
+//         RSA_PKCS1_SHA256 => 0x0401,
+//         ECDSA_NISTP256_SHA256 => 0x0403,
+//         RSA_PKCS1_SHA384 => 0x0501,
+//         ECDSA_NISTP384_SHA384 => 0x0503,
+//         RSA_PKCS1_SHA512 => 0x0601,
+//         ECDSA_NISTP521_SHA512 => 0x0603,
+//         RSA_PSS_SHA256 => 0x0804,
+//         RSA_PSS_SHA384 => 0x0805,
+//         RSA_PSS_SHA512 => 0x0806,
+//         ED25519 => 0x0807,
+//         ED448 => 0x0808,
+//     }
+// }
+include!("../generated/enums_signatureschemes.rs");
 
 enum_builder! {
     /// The `PSKKeyExchangeMode` TLS protocol enum.  Values in this enum are taken

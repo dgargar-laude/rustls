@@ -3,9 +3,10 @@ use crate::key;
 use crate::error::TLSError;
 
 use ring::{self, signature::{self, EcdsaKeyPair, Ed25519KeyPair, RsaKeyPair}};
+use oqs;
 use webpki;
 
-use std::sync::Arc;
+use std::{sync::Arc, convert::TryInto};
 use std::mem;
 
 /// An abstract signing key.
@@ -18,6 +19,11 @@ pub trait SigningKey : Send + Sync {
 
     /// What kind of key we have.
     fn algorithm(&self) -> SignatureAlgorithm;
+
+    /// Get bytes
+    fn get_bytes(&self) -> &[u8] {
+        unimplemented!()
+    }
 }
 
 /// A thing that can sign a message.
@@ -136,6 +142,8 @@ pub fn any_supported_type(der: &key::PrivateKey) -> Result<Box<dyn SigningKey>, 
         Ok(Box::new(rsa))
     } else if let Ok(ecdsa) = any_ecdsa_type(der) {
         Ok(ecdsa)
+    } else if let Ok(pqsig) = any_pqsig_type(der) {
+        Ok(pqsig)
     } else {
         any_eddsa_type(der)
     }
@@ -167,6 +175,21 @@ pub fn any_eddsa_type(der: &key::PrivateKey) -> Result<Box<dyn SigningKey>, ()> 
 
     // TODO: Add support for Ed448
 
+    Err(())
+}
+
+/// Get PQ signature scheme from der, if it is one
+pub fn any_pqsig_type(der: &key::PrivateKey) -> Result<Box<dyn SigningKey>, ()> {
+    for scheme in include!("generated/pq_sigschemes.rs") {
+        if let Ok(key) = PQSigningKey::new(der, *scheme) {
+            return Ok(Box::new(key));
+        }
+    }
+    for scheme in include!("generated/pq_kemschemes.rs") {
+        if let Ok(key) = PQKemKey::new(der, *scheme) {
+            return Ok(Box::new(key));
+        }
+    }
     Err(())
 }
 
@@ -368,17 +391,155 @@ impl Signer for Ed25519Signer {
     }
 }
 
+struct PQSigningKey {
+    key: Arc<Vec<u8>>,
+    scheme: SignatureScheme,
+}
+
+impl PQSigningKey {
+    fn new(der: &key::PrivateKey, scheme: SignatureScheme) -> Result<PQSigningKey, ()> {
+        use ring::io::der;
+
+        let expected_alg_id = include!("generated/scheme_to_oid.rs");
+
+        let input = untrusted::Input::from(&der.0);
+        input.read_all((), |input| {
+            der::nested(input, der::Tag::Sequence, (), |input| {
+                let version = der::small_nonnegative_integer(input)
+                    .map_err(|e| { panic!("{:?}", e) })?;
+                assert!(version <= 1);
+
+                let alg_id = der::expect_tag_and_get_value(input, der::Tag::Sequence)
+                    .map_err(|_| { panic!("getting oid failed") })?;
+                if alg_id.as_slice_less_safe() != expected_alg_id {
+                    crate::log::error!("Alg ID didn't match");
+                    return Err(())
+                }
+
+                let private_key = der::expect_tag_and_get_value(input, der::Tag::OctetString)
+                    .map_err(|e| { panic!("{:?}", e) })?;
+
+                let oqsalg = include!("generated/sigscheme_to_oqsalg.rs");
+                oqs::init();
+                let oqsalg = oqs::sig::Sig::new(oqsalg).unwrap();
+                assert_eq!(private_key.len(), oqsalg.length_secret_key(), "secret key length");
+
+                Ok(private_key.as_slice_less_safe().to_vec())
+         })
+            .map(|key| PQSigningKey{ key: Arc::new(key), scheme })
+        })
+    }
+}
+
+impl SigningKey for PQSigningKey {
+    fn choose_scheme(&self, offered: &[SignatureScheme]) -> Option<Box<dyn Signer>> {
+        if offered.contains(&self.scheme) {
+            Some(Box::new(PQSigner { key: self.key.clone(), scheme: self.scheme}))
+        } else {
+            None
+        }
+    }
+
+    fn algorithm(&self) -> SignatureAlgorithm {
+        include!("generated/pq_sigscheme_to_sigalg.rs")
+    }
+}
+
+struct PQSigner {
+    key: Arc<Vec<u8>>,
+    scheme: SignatureScheme,
+}
+
+impl Signer for PQSigner {
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>, TLSError> {
+        let scheme = self.scheme;
+        let oqsalg: oqs::sig::Algorithm = include!("generated/sigscheme_to_oqsalg.rs");
+        oqs::init();
+        let sig: oqs::sig::Sig = oqsalg.try_into().unwrap();
+        
+        let sk = sig.secret_key_from_bytes(self.key.as_ref()).unwrap();
+
+        sig.sign(message, sk)
+            .map(|sig| sig.into_vec())
+            .map_err(|_| TLSError::General("Signing failed".to_string()))
+    }
+
+    fn get_scheme(&self) -> SignatureScheme {
+        self.scheme
+    }
+}
+
+
+struct PQKemKey {
+    key: Arc<Vec<u8>>,
+    scheme: SignatureScheme,
+}
+
+impl PQKemKey {
+    fn new(der: &key::PrivateKey, scheme: SignatureScheme) -> Result<Self, ()> {
+        use ring::io::der;
+
+        let expected_alg_id = include!("generated/scheme_to_oid.rs");
+
+        let input = untrusted::Input::from(&der.0);
+        input.read_all((), |input| {
+            der::nested(input, der::Tag::Sequence, (), |input| {
+                let version = der::small_nonnegative_integer(input)
+                    .map_err(|e| { panic!("{:?}", e) })?;
+                assert!(version <= 1);
+
+                let alg_id = der::expect_tag_and_get_value(input, der::Tag::Sequence)
+                    .map_err(|_| { panic!("getting oid failed") })?;
+                if alg_id.as_slice_less_safe() != expected_alg_id {
+                    crate::log::debug!("Alg ID didn't match");
+                    return Err(())
+                }
+
+                let private_key = der::expect_tag_and_get_value(input, der::Tag::OctetString)
+                    .map_err(|e| { panic!("{:?}", e) })?;
+
+                let oqsalg = include!("generated/kemscheme_to_oqsalg.rs");
+                oqs::init();
+                let oqsalg = oqs::kem::Kem::new(oqsalg).unwrap();
+                assert_eq!(private_key.len(), oqsalg.length_secret_key(), "secret key length");
+                
+                Ok(private_key.as_slice_less_safe().to_vec())
+         })
+            .map(|key| PQKemKey{ key: Arc::new(key), scheme })
+        })
+    }
+}
+
+impl SigningKey for PQKemKey {
+    fn choose_scheme(&self, offered: &[SignatureScheme]) -> Option<Box<dyn Signer>> {
+        if offered.contains(&self.scheme) {
+            panic!("why are you trying this.");
+        } else {
+            None
+        }
+    }
+
+    fn algorithm(&self) -> SignatureAlgorithm {
+        SignatureAlgorithm::KEMTLS
+    }
+
+    fn get_bytes(&self) -> &[u8] {
+        &self.key
+    }
+}
+
 /// The set of schemes we support for signatures and
 /// that are allowed for TLS1.3.
 pub fn supported_sign_tls13() -> &'static [SignatureScheme] {
-    &[
-        SignatureScheme::ECDSA_NISTP384_SHA384,
-        SignatureScheme::ECDSA_NISTP256_SHA256,
+    include!("generated/supported_sign_tls13.rs")
+    // &[
+    //     SignatureScheme::ECDSA_NISTP384_SHA384,
+    //     SignatureScheme::ECDSA_NISTP256_SHA256,
 
-        SignatureScheme::RSA_PSS_SHA512,
-        SignatureScheme::RSA_PSS_SHA384,
-        SignatureScheme::RSA_PSS_SHA256,
+    //     SignatureScheme::RSA_PSS_SHA512,
+    //     SignatureScheme::RSA_PSS_SHA384,
+    //     SignatureScheme::RSA_PSS_SHA256,
 
-        SignatureScheme::ED25519,
-    ]
+    //     SignatureScheme::ED25519,
+    // ]
 }

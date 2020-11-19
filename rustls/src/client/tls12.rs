@@ -198,7 +198,7 @@ fn emit_clientkx(handshake: &mut HandshakeDetails,
                  sess: &mut ClientSessionImpl,
                  kxd: &suites::KeyExchangeResult) {
     let mut buf = Vec::new();
-    let ecpoint = PayloadU8::new(Vec::from(kxd.pubkey.as_ref()));
+    let ecpoint = PayloadU8::new(kxd.ciphertext.clone());
     ecpoint.encode(&mut buf);
     let pubkey = Payload::new(buf);
 
