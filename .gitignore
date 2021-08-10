@@ -5,3 +5,5 @@ target/
 *.info
 sslkeylogfile.txt
 *.pyc
+
+__pycache__/
