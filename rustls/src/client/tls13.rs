@@ -484,6 +484,28 @@ impl ExpectCertificate {
     }
 
     fn emit_ciphertext(&mut self, sess: &mut ClientSessionImpl, certificate: webpki::EndEntityCert) -> Result<(), TLSError> {
+        // 1. Verify the certificate chain.
+        if self.server_cert.cert_chain.is_empty() {
+            return Err(TLSError::NoCertificatesPresented);
+        }
+
+        let _certv = sess.config
+            .get_verifier()
+            .verify_server_cert(&sess.config.root_store,
+                                &self.server_cert.cert_chain,
+                                self.handshake.dns_name.as_ref(),
+                                &self.server_cert.ocsp_response)
+            .map_err(|err| send_cert_error_alert(sess, err))?;
+
+        // 3. Verify any included SCTs.
+        match (self.server_cert.scts.as_ref(), sess.config.ct_logs) {
+            (Some(scts), Some(logs)) => {
+                verify::verify_scts(&self.server_cert.cert_chain[0],
+                                    scts,
+                                    logs)?;
+            }
+            (_, _) => {}
+        }
         emit_fake_ccs(&mut self.handshake, sess);
 
         self.handshake.print_runtime("ENCAPSULATING TO CERT");
