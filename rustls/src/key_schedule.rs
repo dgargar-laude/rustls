@@ -69,7 +69,7 @@ impl SecretKind {
 /// typestates.
 struct KeySchedule {
     current: hkdf::Prk,
-    algorithm: ring::hkdf::Algorithm,
+    algorithm: hkdf::Algorithm,
 }
 
 /// KeySchedule that can compute a CFIN for us
